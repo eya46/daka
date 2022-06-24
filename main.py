@@ -2,6 +2,7 @@ import hashlib
 from typing import Union, Optional
 
 import httpx
+from lxml.etree import HTML
 
 url_main = "https://某个网址/"
 
@@ -12,6 +13,8 @@ url_login = url_main + "student/website/login"
 url_last_info = url_main + "student/content/student/temp/zzdk/lastone"
 
 url_send_daka = url_main + "student/content/student/temp/zzdk"
+
+url_send_token = url_main + "student/wap/menu/student/temp/zzdk/_child_/edit"
 
 time_out = httpx.Timeout(4.0)
 
@@ -40,11 +43,11 @@ def md5(passwd: str) -> str:
 async def login(r: httpx.AsyncClient, account: str, password: str) -> Union[bool, str]:
     try:
         await r.get(
-            "https://xgyyx.njpi.edu.cn/student/index",
+            url_index,
             headers=headers,
             timeout=time_out
         )
-
+        
         _res = await r.post(
             url_login,
             headers=headers,
@@ -54,9 +57,9 @@ async def login(r: httpx.AsyncClient, account: str, password: str) -> Union[bool
             },
             timeout=time_out
         )
-
+        
         __data = _res.json()
-
+        
         if __data.get("goto2") is not None:
             return True
         else:
@@ -90,6 +93,33 @@ async def last_info(r: httpx.AsyncClient):
         return False
 
 
+async def get_token(r: httpx.AsyncClient) -> Optional[str]:
+    try:
+        resp = await r.get(
+            url_send_token
+            , headers={
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, "
+                              "like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1"
+            }
+        )
+        return HTML(resp.text).xpath('//*[@id="zzdk_token"]')[0].get("value")
+    except:
+        return None
+
+
+async def get_location(address: str) -> Optional[str]:
+    try:
+        async with httpx.AsyncClient() as r:
+            resp = await r.get(
+                "http://api.map.baidu.com/geocoder",
+                params={"address": address, "output": "json"}
+            )
+            _data = resp.json()["result"]["location"]
+            return f"{_data['lng']},{_data['lat']}"
+    except:
+        return None
+
+
 def build_form(data: dict) -> Optional[dict]:
     def _build(key: str) -> str:
         if key.startswith("!"):
@@ -102,13 +132,15 @@ def build_form(data: dict) -> Optional[dict]:
                 return ""
         else:
             return key
-
+    
     xgym_true_dm = "2" if data.get("xgym", "2") is None else data.get("xgym", "2")
-
+    
     try:
         _temp = {'dkdz': "!dkdz",
+                 'dkdzZb': "!dkdzZb",
                  'dkly': 'baidu',
                  'dkd': "!dkd",
+                 'zzdk_token': "!zzdk_token",
                  'jzdValue': f'{data["jzdSheng"]["dm"]},{data["jzdShi"]["dm"]},{data["jzdXian"]["dm"]}',
                  'jzdSheng.dm': '!jzdSheng.dm',
                  'jzdShi.dm': '!jzdShi.dm',
@@ -117,9 +149,15 @@ def build_form(data: dict) -> Optional[dict]:
                  'jzdDz2': '!jzdDz2',
                  'lxdh': '!lxdh',
                  'sfzx': '!sfzx',
-                 'sfzx1': '不在校' if data["sfzx"] != "1" else "在校",
+                 'sfzx1': '不在校' if data.get("sfzx") != "1" else "在校",
                  'twM.dm': '!twM.dm',
                  'tw1': '!twM.mc',
+                 'tw1M.dm': "",
+                 'tw11': "",
+                 'tw2M.dm': "",
+                 'tw12': "",
+                 'tw3M.dm': "",
+                 'tw13': "",
                  'yczk.dm': '!yczk.dm',
                  'yczk1': '!yczk.mc',
                  'fbrq': '!fbrq',
@@ -135,6 +173,10 @@ def build_form(data: dict) -> Optional[dict]:
                  'jrStzk1': '!jrStzk.mc',
                  'jrJccry.dm': '!jrJccry.dm',
                  'jrJccry1': '!jrJccry.mc',
+                 'jkm': "!jkm",
+                 'jkm1': '',
+                 'xcm': '!xcm',
+                 'xcm1': "",
                  'xgym': '!xgym',
                  'xgym1': xgym_dm[xgym_true_dm],
                  'hsjc': '!hsjc',
@@ -142,10 +184,10 @@ def build_form(data: dict) -> Optional[dict]:
                  'bz': '!bz',
                  'operationType': 'Create',
                  'dm': ''}
-
+        
         for i in _temp:
             _temp[i] = _build(_temp[i])
-
+        
         return _temp
     except Exception as e:
         return None
@@ -159,13 +201,15 @@ async def post_daka(r: httpx.AsyncClient, form: dict) -> str:
             data=form,
             timeout=time_out
         )
-
+        # print(_res.text)
         if "重复提交" in _res.text:
             return "打卡失败 -> 今日已打卡"
+        elif "非法请求" in _res.text:
+            return "打卡失败 -> 提交参数不足或有误"
         elif "message" in _res.text:
-            __temp = "打卡失败 -> 错误如下:\n"
+            __temp = "打卡失败 -> 预料之外的错误，错误如下:\n"
             # print(_res.text)
-            for i in (await _res.json())['errorInfoList']:
+            for i in _res.json()['errorInfoList']:
                 __temp += f"{i['message']}\n"
             return __temp[:-1]
         else:
@@ -184,17 +228,28 @@ async def daka(account: str, password: str) -> str:
             return f"打卡失败 -> {login_res}"
         if isinstance(login_res, bool) and not login_res:
             return f"打卡失败 -> 打卡网站超时"
-
+        
         the_last_info = await last_info(r)
-
+        
         if isinstance(the_last_info, bool):
             return "打卡失败 -> 获取上次打卡信息超时"
-
+        
         form = build_form(the_last_info)
-
+        form["zzdk_token"] = await get_token(r)
+        # 获取打卡token
+        if form["zzdk_token"] is None:
+            return "打卡失败 -> 获取打卡token失败"
         if not form:
             return "打卡失败 -> 构建打卡信息失败"
-
+        
+        if (dkdz := form.get("dkdz")) is None:
+            return "打卡失败 -> 打卡地获取失败"
+        else:
+            _dkdzZb = await get_location(dkdz)
+            if _dkdzZb is None:
+                return "打卡失败 -> 经纬度获取失败"
+            form["dkdzZb"] = _dkdzZb
+        
         return await post_daka(r, form)
     except (httpx.ReadTimeout, httpx.ConnectTimeout):
         return "打卡失败 -> 打卡网站超时"
@@ -208,7 +263,7 @@ async def daka(account: str, password: str) -> str:
 
 if __name__ == '__main__':
     import asyncio
-
+    
     print(asyncio.run(
         daka("2xxxxxxxxx", "abcdefg")
     ))
