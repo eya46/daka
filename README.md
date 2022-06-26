@@ -1,4 +1,9 @@
 # daka
+
+> 转至 [njpi-tools/daka](https://github.com/eya46/njpi-tools/tree/master/daka)
+> 
+> 后续更新也在 njpi-tools 库
+
 ## 使用
 自行修改 url_main
 ## 意义
